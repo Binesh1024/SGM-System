@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'accounts',
+    'system',
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
@@ -83,6 +84,10 @@ WSGI_APPLICATION = 'main.wsgi.application'
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+    
 }
 
 SPECTACULAR_SETTINGS = {
