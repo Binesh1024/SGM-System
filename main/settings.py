@@ -29,7 +29,7 @@ DEBUG = True
 
 # ALLOWED_HOSTS = ["*"]
 
-ALLOWED_HOSTS = ['192.168.18.40','172.16.4.250','127.0.0.1']
+ALLOWED_HOSTS = ['192.168.18.40','172.16.4.250','127.0.0.1',"*"]
 CORS_ALLOW_ALL_ORIGINS = True
 
 # Application definition
