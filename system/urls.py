@@ -1,9 +1,8 @@
 from django.urls import path
-from .views import ClassDashboardView,ClassStudentsListView
-
+from .views import JoinClassView, MySubjectsView
 urlpatterns = [
    
-    path('classes/dashboard/', ClassDashboardView.as_view(), name='class-dashboard'),
-    path('classes/<uuid:class_id>/students/', ClassStudentsListView.as_view(), name='class-students'),
+    path('classes/join/', JoinClassView.as_view(), name='join-class'),
+    path('subjects/my-subjects/', MySubjectsView.as_view(), name='my-subjects'),
 
 ]

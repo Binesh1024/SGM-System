@@ -43,7 +43,7 @@ class User(AbstractBaseUser, PermissionsMixin,BaseModel):
     null=True,
     blank=True,
     related_name='students'
-)
+    )
     groups = models.ManyToManyField(
         "auth.Group",
         blank=True,
@@ -82,3 +82,7 @@ class User(AbstractBaseUser, PermissionsMixin,BaseModel):
     @property
     def is_admin(self):
         return self.role == RoleChoices.ADMIN
+    
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()

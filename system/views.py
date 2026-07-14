@@ -2,66 +2,62 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from django.shortcuts import get_object_or_404
-from django.db.models import Count
+from drf_spectacular.utils import extend_schema
 from django.contrib.auth import get_user_model
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from .models import Class
-from .serializers import ClassSerializer, StudentListSerializer, ClassDashboardResponseSerializer,ClassStudentsResponseSerializer
-from accounts.models import RoleChoices, User
+from django.db import IntegrityError
+from accounts.models import User
+from .models import Class, Subject, Enrollment
+from .serializers import JoinClassSerializer, SubjectListSerializer
+
+
 
 @extend_schema(
-    summary="Get Class Dashboard Statistics",
-    description="Retrieve the total number of classes, total enrolled students, "
-                "and detailed statistics for each class.",
-    responses={200: ClassDashboardResponseSerializer},
+    summary="Join a Class (Batch)",
+    description="Student joins a class using the auto-generated class_code.",
+    request=JoinClassSerializer,
+    responses={200: {"message": "string"}},
 )
-class ClassDashboardView(APIView):
+class JoinClassView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_student:
+            return Response({"error": "Only students can join classes."}, status=403)
+
+        serializer = JoinClassSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        class_code = serializer.validated_data['class_code']
+
+        class_obj = Class.objects.get(class_code=class_code)
+
+        try:
+            Enrollment.objects.create(student=request.user, class_obj=class_obj)
+            return Response({
+                "message": f"Successfully joined {class_obj.name} - {class_obj.section}!"
+            }, status=status.HTTP_201_CREATED)
+        except IntegrityError:
+            return Response({"error": "You are already enrolled in this class."}, status=400)
+
+
+@extend_schema(
+    summary="Get My Subjects",
+    description="Returns all subjects for the class the student has joined.",
+    responses={200: SubjectListSerializer(many=True)},
+)
+class MySubjectsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-    
-        classes_qs = Class.objects.annotate(
-            student_count=Count('students')
-        ).order_by('-academic_year', 'name')
-
-        total_classes = classes_qs.count()
-        total_students = sum(c.student_count for c in classes_qs)
-
-        serializer = ClassSerializer(classes_qs, many=True)
-
+        if not request.user.is_student:
+            return Response({"error": "Access denied."}, status=403)
+        enrollment = Enrollment.objects.filter(student=request.user).first()
+        
+        if not enrollment:
+            return Response({"message": "You haven't joined any class yet."}, status=200)
+        subjects = Subject.objects.filter(class_obj=enrollment.class_obj)
+        
+        serializer = SubjectListSerializer(subjects, many=True)
         return Response({
-            "total_classes": total_classes,
-            "total_students_enrolled": total_students,
-            "classes": serializer.data
-        }, status=status.HTTP_200_OK)
-
-@extend_schema(
-    summary="List Students in a Specific Class",
-    description="Retrieve a detailed list of all students enrolled in a specific class.",
-    parameters=[
-        OpenApiParameter(
-            name='class_id',
-            type=OpenApiTypes.UUID,
-            location=OpenApiParameter.PATH,
-            description="The unique UUID of the class."
-        )
-    ],
-    responses={200: ClassStudentsResponseSerializer},
-)
-class ClassStudentsListView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, class_id):
-        class_obj = get_object_or_404(Class, id=class_id)
-
-        students = User.objects.filter(
-            current_class=class_obj,
-            role=RoleChoices.STUDENT
-        ).order_by('first_name', 'last_name')
-
-        return Response({
-            "class_details": ClassSerializer(class_obj).data,
-            "total_students": students.count(),
-            "students": StudentListSerializer(students, many=True).data
+            "current_class": f"{enrollment.class_obj.name} - {enrollment.class_obj.section}",
+            "subjects": serializer.data
         }, status=status.HTTP_200_OK)
