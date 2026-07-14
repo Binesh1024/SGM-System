@@ -37,6 +37,13 @@ class User(AbstractBaseUser, PermissionsMixin,BaseModel):
     student_id = models.CharField(max_length=50, null=True, blank=True, unique=True)
     enrollment_year = models.IntegerField(null=True, blank=True)
     profile_image = models.URLField(null=True, blank=True)
+    current_class = models.ForeignKey(
+    'system.Class',
+    on_delete=models.SET_NULL,
+    null=True,
+    blank=True,
+    related_name='students'
+)
     groups = models.ManyToManyField(
         "auth.Group",
         blank=True,
