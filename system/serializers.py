@@ -71,3 +71,19 @@ class GradeEntrySerializer(serializers.ModelSerializer):
             subject=subject, 
             **validated_data
         )
+
+class ClassSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Class
+        fields = [
+            'id', 'name', 'section', 'batch_name', 
+            'academic_year', 'class_code'
+        ]
+
+class MyEnrollmentSerializer(serializers.ModelSerializer):
+    class_details = ClassSummarySerializer(source='class_obj', read_only=True)
+    joined_at = serializers.DateTimeField(source='created_at', read_only=True)
+
+    class Meta:
+        model = Enrollment
+        fields = ['id', 'class_details', 'joined_at']

@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from accounts.models import User
 from .models import Class, Subject, Enrollment, Grade
-from .serializers import JoinClassSerializer, SubjectListSerializer,GradeEntrySerializer
+from .serializers import JoinClassSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer
 
 
 @extend_schema(
@@ -177,4 +177,29 @@ class StudentTranscriptView(APIView):
                 "overall_status": overall_status
             },
             "subjects": transcript_subjects
+        }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="Get My Classes",
+    description="Returns all the classes the logged-in student has successfully joined.",
+    responses={200: MyEnrollmentSerializer(many=True)},
+)
+class MyClassesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_student:
+            return Response(
+                {"error": "Only students can view their enrolled classes."}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        enrollments = Enrollment.objects.filter(
+            student=request.user
+        ).select_related('class_obj').order_by('-created_at')
+        serializer = MyEnrollmentSerializer(enrollments, many=True)
+        
+        return Response({
+            "total_enrolled_classes": enrollments.count(),
+            "my_classes": serializer.data
         }, status=status.HTTP_200_OK)
