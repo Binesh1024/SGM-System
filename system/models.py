@@ -63,3 +63,74 @@ class Enrollment(BaseModel):
 
     def __str__(self):
         return f"{self.student.full_name} enrolled in {self.class_obj}"
+    
+
+class Grade(BaseModel):
+    """
+    Stores the marks obtained by a student in a specific subject and exam type.
+    """
+    EXAM_TYPE_CHOICES = [
+        ('Midterm', 'Midterm Exam'),
+        ('Final', 'Final Exam'),
+        ('Assignment', 'Assignment'),
+        ('Quiz', 'Quiz'),
+        ('Practical', 'Practical'),
+    ]
+
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='grades',
+        limit_choices_to={'role': 'student'}
+    )
+    subject = models.ForeignKey(
+        Subject,
+        on_delete=models.CASCADE,
+        related_name='grades'
+    )
+    teacher = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='entered_grades',
+        limit_choices_to={'role': 'teacher'}
+    )
+    
+    exam_type = models.CharField(max_length=20, choices=EXAM_TYPE_CHOICES)
+    obtained_marks = models.DecimalField(max_digits=5, decimal_places=2)
+
+    percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    letter_grade = models.CharField(max_length=2, blank=True)
+    is_passed = models.BooleanField(default=False)
+    remarks = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ('student', 'subject', 'exam_type')
+        verbose_name = "Grade"
+        verbose_name_plural = "Grades"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.student.full_name} - {self.subject.name} ({self.exam_type}): {self.obtained_marks}"
+
+    def save(self, *args, **kwargs):
+        """Auto-calculate percentage, pass/fail, and letter grade before saving."""
+        if self.subject.full_marks > 0:
+            self.percentage = round((self.obtained_marks / self.subject.full_marks) * 100, 2)
+        else:
+            self.percentage = 0.00
+        self.is_passed = self.obtained_marks >= self.subject.pass_marks
+        if self.percentage >= 90:
+            self.letter_grade = 'A+'
+        elif self.percentage >= 80:
+            self.letter_grade = 'A'
+        elif self.percentage >= 70:
+            self.letter_grade = 'B'
+        elif self.percentage >= 60:
+            self.letter_grade = 'C'
+        elif self.percentage >= 50:
+            self.letter_grade = 'D'
+        else:
+            self.letter_grade = 'F'
+
+        super().save(*args, **kwargs)
