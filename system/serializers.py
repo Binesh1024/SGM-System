@@ -25,7 +25,6 @@ class GradeEntrySerializer(serializers.ModelSerializer):
         fields = ['student_roll_no', 'subject_code', 'exam_type', 'obtained_marks', 'remarks']
 
     def validate_student_roll_no(self, value):
-        """Find the student using their custom Roll Number."""
         try:
             student = User.objects.get(student_id=value, role='student')
         except User.DoesNotExist:
@@ -33,7 +32,6 @@ class GradeEntrySerializer(serializers.ModelSerializer):
         return student
 
     def validate_subject_code(self, value):
-        """Find the subject using its unique code (case-insensitive)."""
         try:
             subject = Subject.objects.get(code=value.upper())
         except Subject.DoesNotExist:
@@ -41,9 +39,16 @@ class GradeEntrySerializer(serializers.ModelSerializer):
         return subject
 
     def validate(self, data):
-        student = data.get('student_roll_no') 
-        subject = data.get('subject_code')  
+        student = data.get('student_roll_no')
+        subject = data.get('subject_code')
         obtained_marks = data.get('obtained_marks')
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            if not subject.teachers.filter(id=request.user.id).exists():
+                raise serializers.ValidationError({
+                    "subject_code": "You are not assigned to teach this subject."
+                })
+
         if obtained_marks > subject.full_marks:
             raise serializers.ValidationError({
                 "obtained_marks": f"Marks cannot exceed {subject.full_marks}."
@@ -66,9 +71,12 @@ class GradeEntrySerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         student = validated_data.pop('student_roll_no')
         subject = validated_data.pop('subject_code')
+        request = self.context.get('request')
+        
         return Grade.objects.create(
             student=student, 
-            subject=subject, 
+            subject=subject,
+            teacher=request.user, 
             **validated_data
         )
 
@@ -80,6 +88,21 @@ class ClassSummarySerializer(serializers.ModelSerializer):
             'academic_year', 'class_code'
         ]
 
+class SubjectBriefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Subject
+        fields = ['id', 'code', 'name']
+
+class ClassSummarySerializer(serializers.ModelSerializer):
+    subjects = SubjectBriefSerializer(many=True, read_only=True) 
+
+    class Meta:
+        model = Class
+        fields = [
+            'id', 'name', 'section', 'batch_name', 
+            'academic_year', 'class_code', 'subjects' 
+        ]
+
 class MyEnrollmentSerializer(serializers.ModelSerializer):
     class_details = ClassSummarySerializer(source='class_obj', read_only=True)
     joined_at = serializers.DateTimeField(source='created_at', read_only=True)
@@ -87,3 +110,16 @@ class MyEnrollmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Enrollment
         fields = ['id', 'class_details', 'joined_at']
+
+class TeacherSubjectSerializer(serializers.ModelSerializer):
+    class_name = serializers.CharField(source='class_obj.name', read_only=True)
+    section = serializers.CharField(source='class_obj.section', read_only=True)
+    academic_year = serializers.CharField(source='class_obj.academic_year', read_only=True)
+    batch_name = serializers.CharField(source='class_obj.batch_name', read_only=True)
+
+    class Meta:
+        model = Subject
+        fields = [
+            'id', 'code', 'name', 'full_marks', 'pass_marks',
+            'class_name', 'section', 'academic_year', 'batch_name'
+        ]

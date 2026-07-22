@@ -50,6 +50,8 @@ class SubjectAdmin(admin.ModelAdmin):
         'full_marks',
         'pass_marks',
     )
+
+    filter_horizontal = ('teachers',)
     
     list_filter = (
         'class_obj__academic_year',

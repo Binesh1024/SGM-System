@@ -2,12 +2,12 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema,OpenApiParameter, OpenApiTypes
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from accounts.models import User
 from .models import Class, Subject, Enrollment, Grade
-from .serializers import JoinClassSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer
+from .serializers import JoinClassSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer,TeacherSubjectSerializer
 
 
 @extend_schema(
@@ -62,7 +62,7 @@ class MySubjectsView(APIView):
 
 @extend_schema(
     summary="Enter Student Grade",
-    description="Allows a teacher to enter obtained marks for a student in a specific subject.",
+    description="Allows an assigned teacher to enter obtained marks for a student.",
     request=GradeEntrySerializer,
     responses={201: GradeEntrySerializer},
 )
@@ -75,10 +75,9 @@ class GradeEntryView(APIView):
                 {"error": "Only teachers can enter grades."}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-
-        serializer = GradeEntrySerializer(data=request.data)
+        serializer = GradeEntrySerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        grade = serializer.save(teacher=request.user)
+        grade = serializer.save()
 
         return Response({
             "message": "Grade entered successfully.",
@@ -120,16 +119,15 @@ class StudentTranscriptView(APIView):
 
         transcript_subjects = []
         total_obtained = 0.0
-        total_full = 0.0
+        total_full = 0.0 
         all_passed = True
-        has_any_grade = False
+        has_pending_grades = False  
 
         for subject in subjects:
             total_full += subject.full_marks
             grade = grades_dict.get(subject.id)
 
             if grade:
-                has_any_grade = True
                 total_obtained += float(grade.obtained_marks)
                 if not grade.is_passed:
                     all_passed = False
@@ -143,6 +141,8 @@ class StudentTranscriptView(APIView):
                     "is_passed": grade.is_passed
                 })
             else:
+
+                has_pending_grades = True  
                 transcript_subjects.append({
                     "subject_name": subject.name,
                     "subject_code": subject.code,
@@ -152,7 +152,7 @@ class StudentTranscriptView(APIView):
                     "is_passed": None
                 })
 
-        if not has_any_grade:
+        if has_pending_grades:
             overall_status = "Pending"
         elif all_passed:
             overall_status = "Pass"
@@ -174,7 +174,7 @@ class StudentTranscriptView(APIView):
             "summary": {
                 "total_obtained_marks": total_obtained,
                 "total_full_marks": total_full,
-                "overall_status": overall_status
+                "overall_status": overall_status 
             },
             "subjects": transcript_subjects
         }, status=status.HTTP_200_OK)
@@ -202,4 +202,91 @@ class MyClassesView(APIView):
         return Response({
             "total_enrolled_classes": enrollments.count(),
             "my_classes": serializer.data
+        }, status=status.HTTP_200_OK)
+
+@extend_schema(
+    summary="Get My Assigned Subjects",
+    description="Returns all subjects the logged-in teacher is assigned to teach, along with class details.",
+    responses={200: TeacherSubjectSerializer(many=True)},
+)
+class TeacherAssignedSubjectsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_teacher:
+            return Response({"error": "Only teachers can access this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+        subjects = Subject.objects.filter(
+            teachers=request.user
+        ).select_related('class_obj').order_by('class_obj__name', 'code')
+        
+        serializer = TeacherSubjectSerializer(subjects, many=True)
+        
+        return Response({
+            "total_assigned_subjects": subjects.count(),
+            "subjects": serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="Get Students in a Subject",
+    description="Returns all students enrolled in the class for a specific subject, including their current grade (if entered).",
+    parameters=[
+        OpenApiParameter(
+            name='subject_id',
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.PATH,
+            description="The UUID of the subject."
+        )
+    ],
+    responses={200: {"type": "object"}},
+)
+class SubjectStudentsListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, subject_id):
+        if not request.user.is_teacher:
+            return Response({"error": "Only teachers can access this endpoint."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            subject = Subject.objects.select_related('class_obj').get(id=subject_id)
+        except Subject.DoesNotExist:
+            return Response({"error": "Subject not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        if not subject.teachers.filter(id=request.user.id).exists():
+            return Response({"error": "You are not assigned to teach this subject."}, status=status.HTTP_403_FORBIDDEN)
+        enrollments = Enrollment.objects.filter(
+            class_obj=subject.class_obj
+        ).select_related('student').order_by('student__first_name', 'student__last_name')
+        student_ids = [enrollment.student_id for enrollment in enrollments]
+        grades = Grade.objects.filter(
+            subject=subject, 
+            student_id__in=student_ids
+        )
+        grades_dict = {grade.student_id: grade for grade in grades}
+        students_data = []
+        for enrollment in enrollments:
+            student = enrollment.student
+            grade = grades_dict.get(student.id)
+            
+            students_data.append({
+                "id": str(student.id),
+                "student_id": student.student_id,
+                "full_name": student.full_name,
+                "email": student.email,
+                "grade": {
+                    "exam_type": grade.exam_type,
+                    "obtained_marks": float(grade.obtained_marks),
+                    "letter_grade": grade.letter_grade,
+                    "is_passed": grade.is_passed
+                } if grade else None 
+            })
+            
+        return Response({
+            "subject_info": {
+                "id": str(subject.id),
+                "code": subject.code,
+                "name": subject.name,
+                "class": f"{subject.class_obj.name} - {subject.class_obj.section} ({subject.class_obj.batch_name})"
+            },
+            "total_students": len(students_data),
+            "students": students_data
         }, status=status.HTTP_200_OK)
