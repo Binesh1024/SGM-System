@@ -371,3 +371,79 @@ class SubjectStudentsListView(APIView):
             "total_students": len(students_data),
             "students": students_data
         }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    summary="Teacher Dashboard Statistics",
+    description="Returns pass/fail statistics and pending grading counts for all subjects assigned to the logged-in teacher.",
+    responses={200: {"type": "object"}},
+)
+class TeacherDashboardView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_teacher:
+            return Response({"error": "Only teachers can view this dashboard."}, status=status.HTTP_403_FORBIDDEN)
+        subjects = Subject.objects.filter(
+            teachers=request.user
+        ).select_related('class_obj')
+
+        dashboard_data = []
+        total_pending_grades = 0
+        total_students_managed = 0
+
+        for subject in subjects:
+            enrolled_student_ids = Enrollment.objects.filter(
+                class_obj=subject.class_obj
+            ).values_list('student_id', flat=True)
+            
+            total_students = len(enrolled_student_ids)
+            total_students_managed += total_students
+            grades = Grade.objects.filter(
+                subject=subject, 
+                student_id__in=enrolled_student_ids
+            )
+            student_grades = {}
+            for g in grades:
+                if g.student_id not in student_grades:
+                    student_grades[g.student_id] = {}
+                student_grades[g.student_id][g.exam_type] = g
+
+            passed = 0
+            failed = 0
+            pending = 0
+            for student_id in enrolled_student_ids:
+                exams = student_grades.get(student_id, {})
+                if 'Midterm' in exams and 'Final' in exams:
+                    mid_pct = (float(exams['Midterm'].obtained_marks) / subject.full_marks) * 100
+                    fin_pct = (float(exams['Final'].obtained_marks) / subject.full_marks) * 100
+                    
+                    final_weighted_pct = (mid_pct * 0.40) + (fin_pct * 0.60)
+                    pass_threshold = (subject.pass_marks / subject.full_marks) * 100
+                    
+                    if final_weighted_pct >= pass_threshold:
+                        passed += 1
+                    else:
+                        failed += 1
+                else:
+                    pending += 1
+
+            total_pending_grades += pending
+            dashboard_data.append({
+                "subject_id": str(subject.id),
+                "subject_code": subject.code,
+                "subject_name": subject.name,
+                "class": f"{subject.class_obj.name} - {subject.class_obj.section}",
+                "total_students": total_students,
+                "passed": passed,
+                "failed": failed,
+                "pending": pending
+            })
+        return Response({
+            "summary": {
+                "total_assigned_subjects": subjects.count(),
+                "total_students_managed": total_students_managed,
+                "total_pending_grades": total_pending_grades
+            },
+            "subjects_performance": dashboard_data
+        }, status=status.HTTP_200_OK)
