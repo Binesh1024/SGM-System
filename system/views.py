@@ -3,11 +3,11 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema,OpenApiParameter, OpenApiTypes
-from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
 from django.db import IntegrityError
 from accounts.models import User
 from .models import Class, Subject, Enrollment, Grade
-from .serializers import JoinClassSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer,TeacherSubjectSerializer
+from .serializers import JoinClassSerializer, MySubjectsRequestSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer,TeacherSubjectSerializer
 
 
 @extend_schema(
@@ -38,26 +38,43 @@ class JoinClassView(APIView):
             return Response({"error": "You are already enrolled in this class."}, status=400)
 
 @extend_schema(
-    summary="Get My Subjects",
-    description="Returns all subjects for the class the student has joined.",
+    summary="Get Subjects for a Specific Class",
+    description="Returns all subjects for a specific class that the student has joined.",
+    request=MySubjectsRequestSerializer,
     responses={200: SubjectListSerializer(many=True)},
 )
 class MySubjectsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def post(self, request):
+        # 1. Ensure only students can access this
         if not request.user.is_student:
-            return Response({"error": "Access denied."}, status=403)
-        enrollment = Enrollment.objects.filter(student=request.user).first()
+            return Response({"error": "Access denied. Students only."}, status=status.HTTP_403_FORBIDDEN)
         
-        if not enrollment:
-            return Response({"message": "You haven't joined any class yet."}, status=200)
-        subjects = Subject.objects.filter(class_obj=enrollment.class_obj)
+        # 2. Validate the incoming class_id
+        serializer = MySubjectsRequestSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
         
-        serializer = SubjectListSerializer(subjects, many=True)
+        class_id = serializer.validated_data['class_id']
+        
+        # 3. Get the class details
+        class_obj = get_object_or_404(Class, id=class_id)
+        
+        # 4. Fetch all subjects for this class
+        subjects = Subject.objects.filter(class_obj=class_obj)
+        subject_serializer = SubjectListSerializer(subjects, many=True)
+        
+        # 5. Return the response
         return Response({
-            "current_class": f"{enrollment.class_obj.name} - {enrollment.class_obj.section}",
-            "subjects": serializer.data
+            "class_info": {
+                "id": str(class_obj.id),
+                "name": class_obj.name,
+                "section": class_obj.section,
+                "batch_name": class_obj.batch_name,
+                "academic_year": class_obj.academic_year
+            },
+            "total_subjects": subjects.count(),
+            "subjects": subject_serializer.data
         }, status=status.HTTP_200_OK)
 
 @extend_schema(

@@ -11,6 +11,23 @@ class JoinClassSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid class code. Please check and try again.")
         return value
 
+class MySubjectsRequestSerializer(serializers.Serializer):
+    """Validates that the student is requesting subjects for a class they are actually enrolled in."""
+    class_id = serializers.UUIDField(required=True)
+
+    def validate_class_id(self, value):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            is_enrolled = Enrollment.objects.filter(
+                student=request.user, 
+                class_obj_id=value
+            ).exists()
+            
+            if not is_enrolled:
+                raise serializers.ValidationError("You are not enrolled in this class.")
+        return value
+
+
 class SubjectListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Subject
@@ -41,7 +58,18 @@ class GradeEntrySerializer(serializers.ModelSerializer):
     def validate(self, data):
         student = data.get('student_roll_no')
         subject = data.get('subject_code')
+        exam_type = data.get('exam_type')
         obtained_marks = data.get('obtained_marks')
+
+        if Grade.objects.filter(
+            student=student,
+            subject=subject,
+            exam_type=exam_type
+        ).exists():
+            raise serializers.ValidationError({
+                "exam_type": "Grade already entered for this exam type. Please update the existing grade instead."
+            })
+
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             if not subject.teachers.filter(id=request.user.id).exists():
@@ -79,7 +107,6 @@ class GradeEntrySerializer(serializers.ModelSerializer):
             teacher=request.user, 
             **validated_data
         )
-
 class ClassSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = Class
