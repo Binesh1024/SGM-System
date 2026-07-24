@@ -53,3 +53,18 @@ class RegistrationSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    full_name = serializers.ReadOnlyField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'full_name',
+            'phone_number', 'student_id', 'role', 'enrollment_year', 
+            # 'profile_image',
+        ]
+        read_only_fields = [
+            'id', 'email', 'student_id', 'role', 
+             'full_name'
+        ]   

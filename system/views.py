@@ -6,7 +6,7 @@ from drf_spectacular.utils import extend_schema,OpenApiParameter, OpenApiTypes
 from django.shortcuts import get_object_or_404
 from django.db import IntegrityError
 from accounts.models import User
-from .models import Class, Subject, Enrollment, Grade
+from .models import Class, Subject, Enrollment, Grade,get_subject_final_grade
 from .serializers import JoinClassSerializer, MySubjectsRequestSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer,TeacherSubjectSerializer
 from django.utils import timezone
 
@@ -88,8 +88,9 @@ class GradeEntryView(APIView):
         serializer = GradeEntrySerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         grade = serializer.save()
+        final_grade_data = get_subject_final_grade(grade.student, grade.subject)
 
-        return Response({
+        response_data = {
             "message": "Grade entered successfully.",
             "grade_details": {
                 "student": grade.student.full_name,
@@ -99,7 +100,14 @@ class GradeEntryView(APIView):
                 "letter_grade": grade.letter_grade,
                 "is_passed": grade.is_passed
             }
-        }, status=status.HTTP_201_CREATED)
+        }
+        if final_grade_data:
+            response_data["final_subject_grade"] = final_grade_data
+            response_data["message"] += " Final subject grade calculated."
+        else:
+            response_data["message"] += " Waiting for remaining exam types to calculate final grade."
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
     
 
 
@@ -116,6 +124,7 @@ class GradeEntryView(APIView):
     ],
     responses={200: {"type": "object"}},
 )
+
 class StudentTranscriptView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -165,11 +174,10 @@ class StudentTranscriptView(APIView):
             "available_classes": classes_summary
         }, status=status.HTTP_200_OK)
 
+    
     def _generate_single_transcript(self, student, class_obj):
         """Helper method to calculate and return the transcript for a specific class."""
         subjects = Subject.objects.filter(class_obj=class_obj)
-        grades = Grade.objects.filter(student=student, subject__in=subjects)
-        grades_dict = {grade.subject_id: grade for grade in grades}
 
         transcript_subjects = []
         total_obtained = 0.0
@@ -178,31 +186,46 @@ class StudentTranscriptView(APIView):
         has_pending_grades = False
 
         for subject in subjects:
-            total_full += subject.full_marks
-            grade = grades_dict.get(subject.id)
+            total_full += 100 
+            individual_grades = Grade.objects.filter(student=student, subject=subject)
+            final_grade_data = get_subject_final_grade(student, subject)
 
-            if grade:
-                total_obtained += float(grade.obtained_marks)
-                if not grade.is_passed:
+            if final_grade_data:
+                total_obtained += final_grade_data['final_percentage']
+                if not final_grade_data['is_passed']:
                     all_passed = False
                 
                 transcript_subjects.append({
                     "subject_name": subject.name,
                     "subject_code": subject.code,
-                    "obtained_marks": float(grade.obtained_marks),
-                    "full_marks": subject.full_marks,
-                    "letter_grade": grade.letter_grade,
-                    "is_passed": grade.is_passed
+                    "final_percentage": final_grade_data['final_percentage'],
+                    "final_letter_grade": final_grade_data['letter_grade'],
+                    "is_passed": final_grade_data['is_passed'],
+                    "exam_breakdown": [
+                        {
+                            "exam_type": g.exam_type,
+                            "obtained_marks": float(g.obtained_marks),
+                            "full_marks": subject.full_marks,
+                            "percentage": float(g.percentage)
+                        } for g in individual_grades
+                    ]
                 })
             else:
                 has_pending_grades = True
                 transcript_subjects.append({
                     "subject_name": subject.name,
                     "subject_code": subject.code,
-                    "obtained_marks": None,
-                    "full_marks": subject.full_marks,
-                    "letter_grade": "Pending",
-                    "is_passed": None
+                    "final_percentage": None,
+                    "final_letter_grade": "Pending",
+                    "is_passed": None,
+                    "exam_breakdown": [
+                        {
+                            "exam_type": g.exam_type,
+                            "obtained_marks": float(g.obtained_marks),
+                            "full_marks": subject.full_marks,
+                            "percentage": float(g.percentage)
+                        } for g in individual_grades
+                    ]
                 })
 
         if has_pending_grades:

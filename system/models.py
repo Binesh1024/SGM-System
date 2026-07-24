@@ -79,9 +79,6 @@ class Grade(BaseModel):
     EXAM_TYPE_CHOICES = [
         ('Midterm', 'Midterm Exam'),
         ('Final', 'Final Exam'),
-        ('Assignment', 'Assignment'),
-        ('Quiz', 'Quiz'),
-        ('Practical', 'Practical'),
     ]
 
     student = models.ForeignKey(
@@ -141,3 +138,41 @@ class Grade(BaseModel):
             self.letter_grade = 'F'
 
         super().save(*args, **kwargs)
+
+
+def get_subject_final_grade(student, subject):
+    """
+    Calculates the final weighted grade on-the-fly.
+    Returns None if not all required exams (Midterm/Final) have been entered yet.
+    """
+    EXAM_WEIGHTS = {
+        'Midterm': 0.40,  # 40%
+        'Final': 0.60,    # 60%
+    }
+    grades = Grade.objects.filter(student=student, subject=subject)
+    grades_dict = {g.exam_type: g for g in grades}
+    if not all(exam in grades_dict for exam in EXAM_WEIGHTS.keys()):
+        return None 
+
+    total_weighted_percentage = 0.0
+
+    for exam_type, weight in EXAM_WEIGHTS.items():
+        grade = grades_dict[exam_type]
+
+        exam_percentage = (float(grade.obtained_marks) / grade.subject.full_marks) * 100
+        total_weighted_percentage += exam_percentage * weight
+
+    if total_weighted_percentage >= 90: letter = 'A+'
+    elif total_weighted_percentage >= 80: letter = 'A'
+    elif total_weighted_percentage >= 70: letter = 'B'
+    elif total_weighted_percentage >= 60: letter = 'C'
+    elif total_weighted_percentage >= 50: letter = 'D'
+    else: letter = 'F'
+    pass_percentage = (subject.pass_marks / subject.full_marks) * 100
+    is_passed = total_weighted_percentage >= pass_percentage
+
+    return {
+        'final_percentage': round(total_weighted_percentage, 2),
+        'letter_grade': letter,
+        'is_passed': is_passed,
+    }

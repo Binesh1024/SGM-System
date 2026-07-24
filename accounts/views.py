@@ -1,8 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
-from .serializers import RegistrationSerializer,LoginSerializer
+from rest_framework.permissions import AllowAny,IsAuthenticated
+from .serializers import RegistrationSerializer,LoginSerializer,UserProfileSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
 from drf_spectacular.utils import extend_schema
@@ -63,5 +63,28 @@ class LoginView(APIView):
         else:
                 return Response({'message':'Credentials Invalid'}, status= status.HTTP_401_UNAUTHORIZED)
         
-                
+@extend_schema(
+    summary="Get or Update My Profile",
+    description="Retrieve the logged-in user's profile details, or update editable fields like phone number and profile image.",
+    responses={200: UserProfileSerializer},
+)
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """View Profile"""
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        """Update Profile (Partial Update)"""
+        serializer = UserProfileSerializer(
+            request.user, 
+            data=request.data, 
+            partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        
+        return Response(serializer.data, status=status.HTTP_200_OK)            
         
