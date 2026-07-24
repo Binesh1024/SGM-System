@@ -5,7 +5,7 @@ urlpatterns = [
     path('student/classes/join/', JoinClassView.as_view(), name='join-class'),
     path('student/classes/my-classes/', MyClassesView.as_view(), name='my-classes'),
     path('student/subjects/my-subjects/', MySubjectsView.as_view(), name='my-subjects'),
-    path('student/transcript/my-transcript/', StudentTranscriptView.as_view(), name='my-transcript'),
+    path('student/transcript/download/', StudentTranscriptView.as_view(), name='student-transcript'), 
     
     # Teacher URLs
     path('teachers/grades/enter/', GradeEntryView.as_view(), name='enter-grade'),

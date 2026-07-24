@@ -8,7 +8,7 @@ from django.db import IntegrityError
 from accounts.models import User
 from .models import Class, Subject, Enrollment, Grade
 from .serializers import JoinClassSerializer, MySubjectsRequestSerializer, SubjectListSerializer,GradeEntrySerializer, MyEnrollmentSerializer,TeacherSubjectSerializer
-
+from django.utils import timezone
 
 @extend_schema(
     summary="Join a Class (Batch)",
@@ -47,24 +47,17 @@ class MySubjectsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # 1. Ensure only students can access this
         if not request.user.is_student:
             return Response({"error": "Access denied. Students only."}, status=status.HTTP_403_FORBIDDEN)
-        
-        # 2. Validate the incoming class_id
+
         serializer = MySubjectsRequestSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         
         class_id = serializer.validated_data['class_id']
-        
-        # 3. Get the class details
         class_obj = get_object_or_404(Class, id=class_id)
-        
-        # 4. Fetch all subjects for this class
         subjects = Subject.objects.filter(class_obj=class_obj)
         subject_serializer = SubjectListSerializer(subjects, many=True)
-        
-        # 5. Return the response
+
         return Response({
             "class_info": {
                 "id": str(class_obj.id),
@@ -111,34 +104,78 @@ class GradeEntryView(APIView):
 
 
 @extend_schema(
-    summary="Get Student Transcript",
-    description="Returns all subjects for the student's enrolled class along with their grades.",
-    responses={200: {"type": "object"}}, 
+    summary="Download/View Student Transcript",
+    description="Returns the live transcript. If class_id is provided, returns the detailed transcript for that class. If omitted, returns a list of all enrolled classes.",
+    parameters=[
+        OpenApiParameter(
+            name='class_id',
+            type=OpenApiTypes.UUID,
+            location=OpenApiParameter.QUERY,
+            description="Optional: The UUID of the specific class to get the transcript for."
+        )
+    ],
+    responses={200: {"type": "object"}},
 )
 class StudentTranscriptView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         if not request.user.is_student:
-            return Response({"error": "Only students can view their transcript."}, status=403)
+            return Response({"error": "Only students can view their transcript."}, status=status.HTTP_403_FORBIDDEN)
 
-        enrollment = Enrollment.objects.filter(student=request.user).select_related('class_obj').first()
-        
-        if not enrollment:
-            return Response({"message": "You are not enrolled in any class yet."}, status=200)
+        requested_class_id = request.query_params.get('class_id')
 
-        class_obj = enrollment.class_obj
+        if requested_class_id:
 
+            enrollment = Enrollment.objects.filter(
+                student=request.user, 
+                class_obj_id=requested_class_id
+            ).select_related('class_obj').first()
+
+            if not enrollment:
+                return Response(
+                    {"error": "You are not enrolled in this class, or the class ID is invalid."}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+
+            return self._generate_single_transcript(request.user, enrollment.class_obj)
+
+        enrollments = Enrollment.objects.filter(
+            student=request.user
+        ).select_related('class_obj').order_by('-created_at')
+
+        if not enrollments.exists():
+            return Response({"message": "You are not enrolled in any classes yet."}, status=status.HTTP_200_OK)
+
+        classes_summary = []
+        for enrollment in enrollments:
+            class_obj = enrollment.class_obj
+            classes_summary.append({
+                "class_id": str(class_obj.id),
+                "program": class_obj.name,
+                "section": class_obj.section,
+                "batch": class_obj.batch_name,
+                "academic_year": class_obj.academic_year,
+                "enrolled_at": enrollment.created_at.strftime("%Y-%m-%d")
+            })
+
+        return Response({
+            "message": "Please specify a class_id to download the detailed transcript.",
+            "available_classes": classes_summary
+        }, status=status.HTTP_200_OK)
+
+    def _generate_single_transcript(self, student, class_obj):
+        """Helper method to calculate and return the transcript for a specific class."""
         subjects = Subject.objects.filter(class_obj=class_obj)
-        
-        grades = Grade.objects.filter(student=request.user, subject__in=subjects)
+        grades = Grade.objects.filter(student=student, subject__in=subjects)
         grades_dict = {grade.subject_id: grade for grade in grades}
 
         transcript_subjects = []
         total_obtained = 0.0
-        total_full = 0.0 
+        total_full = 0.0
         all_passed = True
-        has_pending_grades = False  
+        has_pending_grades = False
 
         for subject in subjects:
             total_full += subject.full_marks
@@ -158,32 +195,36 @@ class StudentTranscriptView(APIView):
                     "is_passed": grade.is_passed
                 })
             else:
-
-                has_pending_grades = True  
+                has_pending_grades = True
                 transcript_subjects.append({
                     "subject_name": subject.name,
                     "subject_code": subject.code,
                     "obtained_marks": None,
                     "full_marks": subject.full_marks,
-                    "letter_grade": "N/A",
+                    "letter_grade": "Pending",
                     "is_passed": None
                 })
 
         if has_pending_grades:
-            overall_status = "Pending"
+            overall_status = "Pending (Incomplete)"
         elif all_passed:
             overall_status = "Pass"
         else:
             overall_status = "Fail"
 
         return Response({
+            "transcript_header": {
+                "institution_name": "Your University Name",
+                "document_title": "Official Student Transcript",
+                "generated_at": timezone.now().strftime("%Y-%m-%d %H:%M:%S")
+            },
             "student_info": {
-                "name": request.user.full_name,
-                "student_id": request.user.student_id,
-                "email": request.user.email
+                "name": student.full_name,
+                "student_id": student.student_id,
+                "email": student.email
             },
             "class_info": {
-                "name": class_obj.name,
+                "program": class_obj.name,
                 "section": class_obj.section,
                 "batch": class_obj.batch_name,
                 "academic_year": class_obj.academic_year
@@ -191,7 +232,7 @@ class StudentTranscriptView(APIView):
             "summary": {
                 "total_obtained_marks": total_obtained,
                 "total_full_marks": total_full,
-                "overall_status": overall_status 
+                "overall_status": overall_status
             },
             "subjects": transcript_subjects
         }, status=status.HTTP_200_OK)
